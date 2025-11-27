@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Voice Translator</title>
+<style>
+  body {
+    font-family: Arial, sans-serif;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 20px;
+  }
+  .container {
+    background: white;
+    border-radius: 20px;
+    padding: 30px;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+    max-width: 600px;
+    width: 100%;
+  }
+  h1 { color: #667eea; margin-bottom: 20px; font-size: 2em; text-align: center; }
+  input {
+    width: 100%;
+    padding: 12px;
+    border: 2px solid #e0e0e0;
+    border-radius: 10px;
+    font-size: 16px;
+    margin-bottom: 20px;
+    box-sizing: border-box;
+  }
+  input:focus { outline: none; border-color: #667eea; }
+  .action-bar {
+    margin: 15px 0;
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  button {
+    background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+    color: white;
+    border: none;
+    padding: 12px 25px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 15px;
+    font-weight: bold;
+    transition: transform 0.2s;
+  }
+  button:hover { transform: translateY(-2px); box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4); }
+  button:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+  .voice-btn { background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); }
+  .recording { background: linear-gradient(135deg, #ff6b6b 0%, #ee5a6f 100%); }
+  #result {
+    margin: 20px 0;
+    background: linear-gradient(135deg, #ffecd2 0%, #fcb69f 100%);
+    border-radius: 10px;
+    padding: 15px;
+    display: none;
+  }
+  #result.show { display: block; }
+  .result-label { font-weight: bold; color: #764ba2; margin-bottom: 5px; }
+  .result-text { color: #333; font-size: 1.1em; word-wrap: break-word; }
+  hr { border: none; border-top: 2px solid rgba(255,255,255,0.5); margin: 10px 0; }
+  .error { color: #ff4757; background: #ffe6e9; padding: 10px; border-radius: 8px; font-weight: bold; }
+  .loading { color: #667eea; font-weight: bold; text-align: center; }
+  .status {
+    text-align: center;
+    padding: 10px;
+    margin: 10px 0;
+    border-radius: 8px;
+    background: #e8f4f8;
+    color: #2c3e50;
+    font-size: 14px;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>🎤 Voice Translator</h1>
+  
+  <div class="status" id="status">Ready to translate</div>
+  
+  <input type="text" id="textInput" placeholder="Enter text to translate...">
+
+  <div class="action-bar">
+    <button id="translateBtn" onclick="translateText()">💬 Translate</button>
+    <button id="voiceBtn" class="voice-btn" onclick="toggleRecording()">🎙️ Start Recording</button>
+  </div>
+
+  <div id="result"></div>
+</div>
+
+<script>
+const API = ""; 
+// Or const API = location.origin;
+// This tells the browser to make API requests relative to the current domain (e.g., fetch("/translate")).
+let audioContext;
+let mediaStream;
+let processor;
+let input;
+let audioChunks = [];
+let isRecording = false;
+
+function showResult(html) {
+  const r = document.getElementById("result");
+  r.innerHTML = html;
+  r.classList.add('show');
+}
+
+function updateStatus(msg, isError = false) {
+  const status = document.getElementById("status");
+  status.textContent = msg;
+  status.style.background = isError ? "#ffe6e9" : "#e8f4f8";
+  status.style.color = isError ? "#ff4757" : "#2c3e50";
+}
+
+async function translateText() {
+  const text = document.getElementById("textInput").value.trim();
+  if (!text) {
+    updateStatus("⚠️ Please enter text", true);
+    return;
+  }
+  
+  updateStatus("🔄 Translating...");
+  document.getElementById("translateBtn").disabled = true;
+
+  const form = new FormData();
+  form.append("text", text);
+
+  try {
+    const res = await fetch(`${API}/translate`, { method: "POST", body: form });
+    const data = await res.json();
+    
+    if (data.error) {
+      showResult(`<div class="error">❌ ${data.error}</div>`);
+      updateStatus("Translation failed", true);
+    } else {
+      showResult(`
+        <div class="result-label">📝 Original:</div>
+        <div class="result-text">${data.original}</div>
+        <hr>
+        <div class="result-label">🇬🇧 English:</div>
+        <div class="result-text">${data.translated.english}</div>
+        <hr>
+        <div class="result-label">🇮🇳 Telugu:</div>
+        <div class="result-text">${data.translated.telugu}</div>
+        <hr>
+        <div class="result-label">🇮🇳 Tamil:</div>
+        <div class="result-text">${data.translated.tamil}</div>
+      `);
+      updateStatus("✅ Translation complete!");
+    }
+  } catch (err) {
+    showResult(`<div class="error">⚠️ Cannot connect to server. Make sure Flask is running on port 5000.<br><br>Error: ${err.message}</div>`);
+    updateStatus("Server connection failed", true);
+  } finally {
+    document.getElementById("translateBtn").disabled = false;
+  }
+}
+
+async function toggleRecording() {
+  if (isRecording) {
+    stopRecording();
+  } else {
+    startRecording();
+  }
+}
+
+async function startRecording() {
+  updateStatus("🎧 Listening... Speak now!");
+  const voiceBtn = document.getElementById("voiceBtn");
+  voiceBtn.textContent = "⏹️ Stop Recording";
+  voiceBtn.classList.add("recording");
+  
+  try {
+    mediaStream = await navigator.mediaDevices.getUserMedia({ 
+      audio: {
+        channelCount: 1,
+        sampleRate: 16000
+      }
+    });
+    
+    audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+    input = audioContext.createMediaStreamSource(mediaStream);
+    processor = audioContext.createScriptProcessor(4096, 1, 1);
+    
+    audioChunks = [];
+    
+    processor.onaudioprocess = (e) => {
+      if (isRecording) {
+        const channelData = e.inputBuffer.getChannelData(0);
+        audioChunks.push(new Float32Array(channelData));
+      }
+    };
+    
+    input.connect(processor);
+    processor.connect(audioContext.destination);
+    
+    isRecording = true;
+    
+    // Auto-stop after 5 seconds
+    setTimeout(() => {
+      if (isRecording) {
+        stopRecording();
+      }
+    }, 5000);
+    
+  } catch (err) {
+    showResult(`<div class="error">🎤 Microphone access denied: ${err.message}</div>`);
+    updateStatus("Microphone error", true);
+    resetVoiceButton();
+  }
+}
+
+function stopRecording() {
+  if (!isRecording) return;
+  
+  isRecording = false;
+  updateStatus("⏳ Processing speech...");
+  
+  // Stop audio processing
+  if (processor) {
+    processor.disconnect();
+    processor = null;
+  }
+  if (input) {
+    input.disconnect();
+    input = null;
+  }
+  if (mediaStream) {
+    mediaStream.getTracks().forEach(track => track.stop());
+  }
+  if (audioContext) {
+    audioContext.close();
+  }
+  
+  // Convert audio to WAV
+  sendAudio();
+}
+
+function resetVoiceButton() {
+  const voiceBtn = document.getElementById("voiceBtn");
+  voiceBtn.textContent = "🎙️ Start Recording";
+  voiceBtn.classList.remove("recording");
+  isRecording = false;
+}
+
+function floatTo16BitPCM(output, offset, input) {
+  for (let i = 0; i < input.length; i++, offset += 2) {
+    const s = Math.max(-1, Math.min(1, input[i]));
+    output.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+  }
+}
+
+function writeString(view, offset, string) {
+  for (let i = 0; i < string.length; i++) {
+    view.setUint8(offset + i, string.charCodeAt(i));
+  }
+}
+
+function encodeWAV(samples, sampleRate) {
+  const buffer = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(buffer);
+
+  writeString(view, 0, 'RIFF');
+  view.setUint32(4, 36 + samples.length * 2, true);
+  writeString(view, 8, 'WAVE');
+  writeString(view, 12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeString(view, 36, 'data');
+  view.setUint32(40, samples.length * 2, true);
+  floatTo16BitPCM(view, 44, samples);
+
+  return view;
+}
+
+async function sendAudio() {
+  // Merge all audio chunks
+  const totalLength = audioChunks.reduce((acc, chunk) => acc + chunk.length, 0);
+  const mergedAudio = new Float32Array(totalLength);
+  let offset = 0;
+  for (const chunk of audioChunks) {
+    mergedAudio.set(chunk, offset);
+    offset += chunk.length;
+  }
+  
+  // Encode to WAV
+  const wavData = encodeWAV(mergedAudio, 16000);
+  const wavBlob = new Blob([wavData], { type: 'audio/wav' });
+  
+  const formData = new FormData();
+  formData.append("audio", wavBlob, "recording.wav");
+
+  try {
+    const res = await fetch(`${API}/voice`, { method: "POST", body: formData });
+    const data = await res.json();
+    
+    if (data.error) {
+      showResult(`<div class="error">❌ ${data.error}</div>`);
+      updateStatus("Speech recognition failed", true);
+    } else {
+      showResult(`
+        <div class="result-label">🎙️ Recognized Speech:</div>
+        <div class="result-text">${data.original}</div>
+        <hr>
+        <div class="result-label">🇬🇧 English:</div>
+        <div class="result-text">${data.original}</div>
+        <hr>
+        <div class="result-label">🇮🇳 Telugu:</div>
+        <div class="result-text">${data.translated.telugu}</div>
+        <hr>
+        <div class="result-label">🇮🇳 Tamil:</div>
+        <div class="result-text">${data.translated.tamil}</div>
+      `);
+      updateStatus("✅ Voice translation complete!");
+    }
+  } catch (err) {
+    showResult(`<div class="error">⚠️ Cannot connect to server.<br><br>Error: ${err.message}</div>`);
+    updateStatus("Server connection failed", true);
+  } finally {
+    resetVoiceButton();
+  }
+}
+</script>
+</body>
+</html>
